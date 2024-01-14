@@ -7,10 +7,18 @@
 #include <vector>
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 
 #ifdef _WIN32 
 #include <Windows.h>
 #endif
+
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 
 #if __has_include(<elf.h>)
 #include <elf.h>
@@ -482,19 +490,18 @@ namespace ELFPP {
             , fileMapping(nullptr)
             , mapView(nullptr)
         {
-#ifdef _WIN32
-            WinInitialize(filePath);
-#else
+
+            Initialize(filePath);
+
+#if not defined(_WIN32) and not defined(__linux__)
 #error "Invalid Plataform"
 #endif
+
         }
 
         inline ~FileMapping() {
-#ifdef _WIN32
-            WinDeinitialize();
-#else
-#error "Invalid Plataform"
-#endif
+
+            Deinitialize();
         }
 
         inline void* GetMapping() const
@@ -509,16 +516,57 @@ namespace ELFPP {
 
     private:
         size_t fileSize;
-        void* fileHandle;
+        union {
+            void* fileHandle;
+            int fileHandleI;
+        };
         void* fileMapping;
-        void* mapView;
+        union {
+            void* mapView;
+            int mapViewI;
+        };
+
+#ifdef __linux__
+        inline void Initialize(const char* filePath)
+        {
+            fileSize = std::filesystem::file_size(filePath);
+
+            if ((fileSize > 0) == false)
+                throw std::runtime_error("Invalid File Size");
+
+            fileHandleI = open(filePath, O_RDONLY);
+
+            if (fileHandleI < 0)
+                throw std::runtime_error("File Open Failed");
+
+            mapView = mmap(nullptr, fileSize, PROT_READ, MAP_SHARED, fileHandleI, 0);
+
+            if (mapViewI == -1)
+            {
+                close(fileHandleI);
+                throw std::runtime_error("File Mapping Failed");
+            }
+        }
+
+        inline void Deinitialize()
+        {
+            if (mapViewI != -1 && mapView != nullptr)
+            {
+                munmap(mapView, fileSize);
+            }
+
+            if (fileHandleI > 0)
+                close(fileHandleI);
+        }
+#endif
+
 
 #ifdef _WIN32
-        inline void WinInitialize(const char* filePath)
+        inline void Initialize(const char* filePath)
         {
             fileHandle = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (fileHandle == INVALID_HANDLE_VALUE)
-                throw std::exception("Error opening file");
+                throw std::runtime_error("Error opening file");
 
             fileSize = GetFileSize(fileHandle, nullptr);
 
@@ -526,7 +574,7 @@ namespace ELFPP {
             if (fileMapping == nullptr)
             {
                 CloseHandle(fileHandle);
-                throw std::exception("Error creating file mapping");
+                throw std::runtime_error("Error creating file mapping");
             }
 
             mapView = MapViewOfFile(fileMapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
@@ -534,11 +582,11 @@ namespace ELFPP {
             if (mapView == nullptr) {
                 CloseHandle(fileMapping);
                 CloseHandle(fileHandle);
-                throw std::exception("Error mapping view of file");
+                throw std::runtime_error("Error mapping view of file");
             }
         }
 
-        inline void WinDeinitialize()
+        inline void Deinitialize()
         {
             if (mapView != nullptr) {
                 UnmapViewOfFile(mapView);
@@ -600,7 +648,7 @@ namespace ELFPP {
         try {
             outElfPack.mapping = std::make_unique<FileMapping>(fullModulePath.c_str());
         }
-        catch (const std::exception& e)
+        catch (std::exception& e)
         {
             std::cerr << e.what();
             return false;
@@ -672,7 +720,7 @@ namespace ELFPP {
     {
         TELFSHdr* secHeader = nullptr;
 
-        ElfForEachSection(libMap, [&](TELFSHdr* currSection) {
+        ElfForEachSection<TELFHdr, TELFSHdr>(libMap, [&](TELFSHdr* currSection) {
             if (currSection->sh_type != sectionType)
                 return true;
 
@@ -756,12 +804,12 @@ namespace ELFPP {
     {
         TELFSHdr* result = nullptr;
 
-        result = ElfLookupSectionByType(libMap, SHT_SYMTAB);
+        result = ElfLookupSectionByType<TELFHdr, TELFSHdr>(libMap, SHT_SYMTAB);
 
         if (result)
             return result;
 
-        result = ElfLookupSectionByType(libMap, SHT_DYNSYM);
+        result = ElfLookupSectionByType<TELFHdr, TELFSHdr>(libMap, SHT_DYNSYM);
 
         if (result)
             return result;
@@ -825,15 +873,15 @@ namespace ELFPP {
      * @param callback: A callback, for each symbol found, this callback will be invocated with the actual symbol & its name.
      * @returns true if a symbol table to traverse was found, nullptr otherwise.
     */
-    template<typename TELFHdr, typename TELFSym>
+    template<typename TELFHdr, typename TELFSHdr, typename TELFSym>
     inline bool ElfForEachSymbol(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFSym* pCurrentSym, const char* pCurrSymName)> callback)
     {
-        const auto* symTable = ElfGetSymbolSection(libMap);
+        auto* symTable = ElfGetSymbolSection<TELFHdr, TELFSHdr>(libMap);
 
         if (symTable == nullptr)
             return false;
 
-        const auto* strTable = ElfSectionByIndex(libMap, symTable->sh_link);
+        auto* strTable = ElfSectionByIndex<TELFHdr, TELFSHdr>(libMap, symTable->sh_link);
 
         if (strTable == nullptr)
             return false;
@@ -863,15 +911,15 @@ namespace ELFPP {
      * @returns true if the symbol was found, false otherwise.
      * @note Symbol lookup may fail for various reasons, such as the absence of a symbol table or the symbol not being present in the symbol table.
     */
-    template<typename TELFHdr, typename TELFSHdr>
+    template<typename TELFHdr, typename TELFSHdr, typename TELFSym>
     inline bool ElfLookupSymbol(const ElfPack<TELFHdr>& libMap, const std::string& symbolName, uint64_t* outSymbolOff = nullptr)
     {
         bool bSymbolFound = false;
 
         if (outSymbolOff)
-            *outSymbolOff = nullptr;
+            *outSymbolOff = 0;
 
-        if (ElfForEachSymbol(libMap, [&](auto* currSym, const char* currSymName) {
+        if (ElfForEachSymbol<TELFHdr, TELFSHdr, TELFSym>(libMap, [&](auto* currSym, const char* currSymName) {
             if (strcmp(currSymName, symbolName.c_str()))
                 return true;
 
