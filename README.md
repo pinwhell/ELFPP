@@ -49,9 +49,12 @@ if (ELFPP::ElfLookupSymbol(elfPack, "example_symbol", &symbolOffset)) {
 ### Building
 
 The library is header-only and does not require building. Simply include the ELFPP.hpp header in your C++ project.
-Platform Support
+
+
+### Platform Support
 
     Windows: Uses WinAPI for file mapping (Windows-specific code inside #ifdef _WIN32).
+    Linux: Uses Posix Standard for file open/mapping.
     Other Platforms: Placeholder for platform-specific code; currently throws a compilation error.
 
 ### License
