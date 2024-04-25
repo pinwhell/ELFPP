@@ -894,8 +894,8 @@ namespace ELFPP {
 
         for (TELFSym* sym = symEntry; sym < symEnd; sym++)
         {
-            if ((ELF_ST_BIND(sym->st_info) & (STT_FUNC | STB_GLOBAL)) == 0)
-                continue;
+            /*if ((ELF_ST_BIND(sym->st_info) & (STT_FUNC | STB_GLOBAL)) == 0)
+                continue;*/
 
             if (callback(sym, elfStrBlob + sym->st_name) == false)
                 break;
