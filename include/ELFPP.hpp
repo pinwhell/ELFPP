@@ -616,6 +616,7 @@ namespace ELFPP {
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
         virtual std::vector<void*> GetLoadablePrograms() = 0;
+        virtual bool Is64() = 0;
     };
 
     /**
@@ -623,6 +624,11 @@ namespace ELFPP {
     */
     template<typename TELFHdr, typename TELFSHdr, typename TELFPHdr, typename TELFSym>
     struct ELF : public IELF {
+
+        inline bool Is64() override {
+            return header->e_ident[EI_CLASS] == ELFCLASS64;
+        }
+
         inline void* SectionByIndex(unsigned int sectionIdx) override
         {
             if ((sectionIdx < header->e_shnum) == false)
@@ -778,7 +784,7 @@ namespace ELFPP {
                 return bSymbolFound;
         }
 
-        void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
+        inline void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
         {
             TELFPHdr* libElfPrograms = (TELFPHdr*)(base + header->e_phoff);
 
@@ -789,7 +795,7 @@ namespace ELFPP {
             }
         }
 
-        std::vector<void*> GetPrograms(bool bSort = false) override
+        inline std::vector<void*> GetPrograms(bool bSort = false) override
         {
             std::vector<void*> result;
 
@@ -813,7 +819,7 @@ namespace ELFPP {
             return result;
         }
 
-        std::vector<void*> GetLoadablePrograms() override
+        inline std::vector<void*> GetLoadablePrograms() override
         {
             std::vector<void*> allPrograms = GetPrograms();
             std::vector<void*> result;
