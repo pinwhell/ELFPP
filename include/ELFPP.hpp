@@ -603,12 +603,233 @@ namespace ELFPP {
 #endif
     };
 
-    /**
-     * @brief Holds the ELF File Mapping
-    */
+    struct IELF {
+        virtual void* SectionByIndex(unsigned int sectionIdx) = 0;
+        virtual void ForEachSection(std::function<bool(void* pCurrentSection)> callback) = 0;
+        virtual void* LookupSectionByType(uint32_t sectionType) = 0;
+        virtual const char* GetSectionHeadersStringBlob() = 0;
+        virtual const char* GetSectionName(void* _sectionHdr) = 0;
+        virtual void* LookupSectionByName(const std::string& sectionName) = 0;
+        virtual void* GetSymbolSection() = 0;
+        virtual bool ForEachSymbol(std::function<bool(void* pCurrentSym, const char* pCurrSymName)> callback, bool bOnlyGlobals = false) = 0;
+        virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
+        virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
+        virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
+        virtual std::vector<void*> GetLoadablePrograms() = 0;
+    };
 
-    template<typename TELFHdr>
-    struct ElfPack {
+    /**
+    * @brief Holds the ELF File Mapping
+    */
+    template<typename TELFHdr, typename TELFSHdr, typename TELFPHdr, typename TELFSym>
+    struct ELF : public IELF {
+        inline void* SectionByIndex(unsigned int sectionIdx) override
+        {
+            if ((sectionIdx < header->e_shnum) == false)
+                return nullptr;
+
+            TELFSHdr* libElfSections = (TELFSHdr*)(base + header->e_shoff);
+
+            return libElfSections + sectionIdx;
+        }
+
+        inline const char* GetSectionHeadersStringBlob() override {
+            if (header->e_shstrndx == SHN_UNDEF)
+                return nullptr;
+
+            const TELFSHdr* shStrSec = (const TELFSHdr*)SectionByIndex(header->e_shstrndx);
+
+            if (shStrSec == nullptr || shStrSec->sh_offset < 1)
+                return nullptr;
+
+            return (const char*)(base + shStrSec->sh_offset);
+        }
+
+        inline void ForEachSection(std::function<bool(void* pCurrentSection)> callback) override
+        {
+            TELFSHdr* libElfSections = (TELFSHdr*)(base + header->e_shoff);
+
+            for (int i = 0; i < header->e_shnum; i++)
+            {
+                if (callback(libElfSections + i) == false)
+                    break;
+            }
+        }
+
+        inline void* LookupSectionByType(uint32_t sectionType) override
+        {
+            TELFSHdr* secHeader = nullptr;
+
+            ForEachSection([&](void* _currSection) {
+                TELFSHdr* currSection = (TELFSHdr*)_currSection;
+                if (currSection->sh_type != sectionType)
+                    return true;
+
+                secHeader = currSection;
+
+                return false;
+                });
+
+            return secHeader;
+        }
+
+        inline const char* GetSectionName(void* _sectionHdr)
+        {
+            TELFSHdr* sectionHdr = (TELFSHdr*)_sectionHdr;
+            const char* shStrBlob = GetSectionHeadersStringBlob();
+
+            if (shStrBlob == nullptr)
+                return nullptr;
+
+            return shStrBlob + sectionHdr->sh_name;
+        }
+
+        inline void* LookupSectionByName(const std::string& sectionName) override
+        {
+            TELFSHdr* secHeader = nullptr;
+
+            ForEachSection([&](void* _currSection) {
+                TELFSHdr* currSection = (decltype(currSection))_currSection;
+                const char* currSectionName = GetSectionName(currSection);
+
+                if (currSectionName == nullptr)
+                    return true;
+
+                if (strcmp(currSectionName, sectionName.c_str()))
+                    return true;
+
+                secHeader = currSection;
+
+                return false;
+                });
+
+            return secHeader;
+        }
+
+        inline void* GetSymbolSection() override
+        {
+            TELFSHdr* result = nullptr;
+
+            result = (TELFSHdr*)LookupSectionByType(SHT_SYMTAB);
+
+            if (result)
+                return result;
+
+            result = (TELFSHdr*)LookupSectionByType(SHT_DYNSYM);
+
+            if (result)
+                return result;
+
+            return result;
+        }
+
+        inline bool ForEachSymbol(std::function<bool(void* pCurrentSym, const char* pCurrSymName)> callback, bool bOnlyGlobals = false) override
+        {
+            TELFSHdr* symTable = (TELFSHdr*)GetSymbolSection();
+
+            if (symTable == nullptr)
+                return false;
+
+            TELFSHdr* strTable = (TELFSHdr*)SectionByIndex(symTable->sh_link);
+
+            if (strTable == nullptr)
+                return false;
+
+            const char* elfStrBlob = (const char*)(base + strTable->sh_offset);
+
+            int nSyms = symTable->sh_size / sizeof(TELFSym);
+            TELFSym* symEntry = (TELFSym*)(base + symTable->sh_offset);
+            TELFSym* symEnd = symEntry + nSyms;
+
+            for (TELFSym* sym = symEntry; sym < symEnd; sym++)
+            {
+                if (bOnlyGlobals && (ELF_ST_BIND(sym->st_info) & STB_GLOBAL) == 0)
+                    continue;
+
+                if (callback(sym, elfStrBlob + sym->st_name) == false)
+                    break;
+            }
+
+            return true;
+        }
+
+        inline bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) override
+        {
+            bool bSymbolFound = false;
+
+            if (outSymbolOff)
+                *outSymbolOff = 0;
+
+            if (ForEachSymbol([&](void* _currSym, const char* currSymName) {
+                TELFSym* currSym = (TELFSym*)_currSym;
+
+                if (strcmp(currSymName, symbolName.c_str()))
+                    return true;
+
+                bSymbolFound = true;
+
+                if (outSymbolOff)
+                    *outSymbolOff = currSym->st_value;
+
+                return false;
+                }, bOnlyGlobals) == false)
+                return false;
+
+                return bSymbolFound;
+        }
+
+        void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
+        {
+            TELFPHdr* libElfPrograms = (TELFPHdr*)(base + header->e_phoff);
+
+            for (int i = 0; i < header->e_phnum; i++)
+            {
+                if (callback(libElfPrograms + i) == false)
+                    break;
+            }
+        }
+
+        std::vector<void*> GetPrograms(bool bSort = false) override
+        {
+            std::vector<void*> result;
+
+            ForEachProgram([&](void* _phdr) {
+                TELFPHdr* phdr = (TELFPHdr*)_phdr;
+
+                result.push_back(_phdr);
+
+                return true;
+                });
+
+            if (bSort && result.empty() == false)
+            {
+                std::sort(result.begin(), result.end(), [&](const void* _left, const void* _right) {
+                    const TELFPHdr& left = *(const TELFPHdr*)_left;
+                    const TELFPHdr& right = *(const TELFPHdr*)_right;
+                    return left.p_vaddr < right.p_vaddr;
+                    });
+            }
+
+            return result;
+        }
+
+        std::vector<void*> GetLoadablePrograms() override
+        {
+            std::vector<void*> allPrograms = GetPrograms();
+            std::vector<void*> result;
+
+            for (void* _program : allPrograms)
+            {
+                const TELFPHdr& program = *(const TELFPHdr*)_program;
+                if (program.p_type != PT_LOAD)
+                    continue;
+
+                result.push_back(_program);
+            }
+
+            return result;
+        }
+
 
         std::unique_ptr<FileMapping> mapping;
 
@@ -635,26 +856,57 @@ namespace ELFPP {
         };
     };
 
+    using ELF32 = typename ELF<Elf32_Ehdr, Elf32_Shdr, Elf32_Phdr, Elf32_Sym>;
+    using ELF64 = typename ELF<Elf64_Ehdr, Elf64_Shdr, Elf64_Phdr, Elf64_Sym>;
+
+    template<typename ELFT>
+    inline ELFT FromBuffer(const void* entry) {
+        ELFT res;
+        res.baseV = (void*)entry;
+        return res;
+    }
+
+    inline bool ElfPeekIs64(const void* elfBuff)
+    {
+        ELF32 dummy = FromBuffer<ELF32>(elfBuff);
+        return dummy.header->e_ident[EI_CLASS] == ELFCLASS64;
+    }
+
+    inline std::unique_ptr<IELF> FromBuffer(const void* entry) {
+        if (ElfPeekIs64(entry))
+            return std::move(std::make_unique<ELF64>(FromBuffer<ELF64>(entry)));
+        
+        return std::move(std::make_unique<ELF32>(FromBuffer<ELF32>(entry)));
+    }
+
     /**
      * @brief Initializes the ELF Library, Notify Callback, Cleanup, Frees the ELF library
      * @returns true if all the operations was sucessfully, false otherwise
     */
-    template<typename TELFHdr>
-    inline bool ElfOpen(const std::string& fullModulePath, ElfPack<TELFHdr>& outElfPack)
+    inline bool ElfOpen(const std::string& fullModulePath, std::unique_ptr<IELF>& outElfPack)
     {
-        outElfPack.baseV = nullptr;
-        outElfPack.mapping.reset();
-
         try {
-            outElfPack.mapping = std::make_unique<FileMapping>(fullModulePath.c_str());
+            auto mapping = std::make_unique<FileMapping>(fullModulePath.c_str());
+            ELF32 dummy = FromBuffer<ELF32>(mapping->GetMapping());
+
+            if (dummy.header->e_ident[EI_CLASS] == ELFCLASS64)
+            {
+                ELF64 elf64 = FromBuffer<ELF64>(mapping->GetMapping());
+                elf64.mapping = std::move(mapping);
+                outElfPack = std::move(std::make_unique<ELF64>(std::move(elf64)));
+                return true;
+            }
+
+            ELF32 elf32 = FromBuffer<ELF32>(mapping->GetMapping());
+            elf32.mapping = std::move(mapping);
+            outElfPack = std::move(std::make_unique<ELF32>(std::move(elf32)));
+            return true;
         }
         catch (std::exception& e)
         {
             std::cerr << e.what();
             return false;
         }
-
-        outElfPack.baseV = outElfPack.mapping->GetMapping();
 
         return true;
     }
@@ -666,272 +918,17 @@ namespace ELFPP {
 
     inline bool ElfPeekIs64(const std::string& fullModulePath, bool& outIs64)
     {
-        ElfPack<Elf32_Ehdr> elfPack;
-
-        outIs64 = false;
-
-        if (ElfOpen(fullModulePath, elfPack) == false)
-            return false;
-
-        outIs64 = elfPack.header->e_ident[EI_CLASS] == ELFCLASS64;
-
-        return true;
-    }
-
-    /**
-     * @brief Get a ELF Section by its given Index.
-     * @param sectionIdx: the given section index
-     * @returns a pointer to a section header if valid, nullptr otherwise
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline TELFSHdr* ElfSectionByIndex(const ElfPack<TELFHdr>& libMap, unsigned int sectionIdx)
-    {
-        if ((sectionIdx < libMap.header->e_shnum) == false)
-            return nullptr;
-
-        TELFSHdr* libElfSections = (TELFSHdr*)(libMap.base + libMap.header->e_shoff);
-
-        return libElfSections + sectionIdx;
-    }
-
-    /**
-     * @brief Traverses all sections within the ELF File
-     * @param callback: will be reported, all the given sections
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline void ElfForEachSection(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFSHdr* pCurrentSection)> callback)
-    {
-        TELFSHdr* libElfSections = (TELFSHdr*)(libMap.base + libMap.header->e_shoff);
-
-        for (int i = 0; i < libMap.header->e_shnum; i++)
-        {
-            if (callback(libElfSections + i) == false)
-                break;
-        }
-    }
-
-    /**
-     * @brief Lookup an ELF Section by its given type
-     * @param sectionType: ELF Section Type
-     * @returns A pointer to the section if it exists; nullptr otherwise.
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline TELFSHdr* ElfLookupSectionByType(const ElfPack<TELFHdr>& libMap, uint32_t sectionType)
-    {
-        TELFSHdr* secHeader = nullptr;
-
-        ElfForEachSection<TELFHdr, TELFSHdr>(libMap, [&](TELFSHdr* currSection) {
-            if (currSection->sh_type != sectionType)
-                return true;
-
-            secHeader = currSection;
-
-            return false;
-            });
-
-        return secHeader;
-    }
-
-    /**
-     * @brief Retrieve the ELF Section Headers Name Blob (shstr) Entry.
-     * @returns A pointer to the char blob entry if exist; nullptr otherwise
-    */
-    template<typename TELFHdr>
-    inline const char* ElfGetSectionHeadersStringBlob(const ElfPack<TELFHdr>& libMap)
-    {
-        if (libMap.header->e_shstrndx == SHN_UNDEF)
-            return nullptr;
-
-        const auto* shStrSec = ElfSectionByIndex(libMap, libMap.header->e_shstrndx);
-
-        if (shStrSec == nullptr || shStrSec->sh_offset < 1)
-            return nullptr;
-
-        return (const char*)(libMap.base + shStrSec->sh_offset);
-    }
-
-    /**
-     * @brief Retrieve ELF Section name
-     * @param sectionHdr: Pointer to ELF Section Header
-     * @returns A Pointer to the section name if exist; nullptr otherwise.
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline const char* ElfGetSectionName(const ElfPack<TELFHdr>& libMap, TELFSHdr* sectionHdr)
-    {
-        const char* shStrBlob = ElfGetSectionHeadersStringBlob(libMap);
-
-        if (shStrBlob == nullptr)
-            return nullptr;
-
-        return shStrBlob + sectionHdr->sh_name;
-    }
-
-    /**
-     * @brief Lookup a ELF Header by its name
-     * @param sectionName: Name of the section (ex: ".rodata", ".text" ...)
-     * @returns A Pointer to the ELF Section if found; nullptr otherwise.
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline TELFSHdr* ElfLookupSectionByName(const ElfPack<TELFHdr>& libMap, const std::string& sectionName)
-    {
-        TELFSHdr* secHeader = nullptr;
-
-        ElfForEachSection(libMap, [&](TELFSHdr* currSection) {
-            const char* currSectionName = ElfGetSectionName(libMap, currSection);
-
-            if (currSectionName == nullptr)
-                return true;
-
-            if (strcmp(currSectionName, sectionName.c_str()))
-                return true;
-
-            secHeader = currSection;
-
-            return false;
-            });
-
-        return secHeader;
-    }
-
-    /**
-     * @brief Retrieve any available Symbol Table ELF Section.
-     * @returns A pointer to the Symbol Table ELF Section if exist; nullptr otherwise;
-     * @note This function first searches for an SHT_SYMTAB type, and if none is found,
-     * it searches for an SHT_DYNSYM type.
-    */
-    template<typename TELFHdr, typename TELFSHdr>
-    inline TELFSHdr* ElfGetSymbolSection(const ElfPack<TELFHdr>& libMap)
-    {
-        TELFSHdr* result = nullptr;
-
-        result = ElfLookupSectionByType<TELFHdr, TELFSHdr>(libMap, SHT_SYMTAB);
-
-        if (result)
-            return result;
-
-        result = ElfLookupSectionByType<TELFHdr, TELFSHdr>(libMap, SHT_DYNSYM);
-
-        if (result)
-            return result;
-
-        return result;
-    }
-
-    template<typename TELFHdr, typename TELFPHdr>
-    inline void ElfForEachProgram(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFPHdr* pCurrenProgram)> callback)
-    {
-        TELFPHdr* libElfPrograms = (TELFPHdr*)(libMap.base + libMap.header->e_phoff);
-
-        for (int i = 0; i < libMap.header->e_phnum; i++)
-        {
-            if (callback(libElfPrograms + i) == false)
-                break;
-        }
-    }
-
-    template<typename TELFHdr, typename TELFPHdr>
-    inline std::vector<TELFPHdr> ElfGetPrograms(const ElfPack<TELFHdr>& libMap, bool bSort = false)
-    {
-        std::vector<TELFPHdr> result;
-
-        ElfForEachProgram<TELFHdr, TELFPHdr>(libMap, [&](TELFPHdr* phdr) {
-
-            result.push_back(*phdr);
-
+        try {
+            FileMapping f(fullModulePath.c_str());
+            outIs64 = ElfPeekIs64(f.GetMapping());
             return true;
-            });
-
-        if (bSort && result.empty() == false)
-        {
-            std::sort(result.begin(), result.end(), [&](const TELFPHdr& left, const TELFPHdr& right) {
-                return left.p_vaddr < right.p_vaddr;
-                });
         }
-
-        return result;
-    }
-
-    template<typename TELFHdr, typename TELFPHdr>
-    inline std::vector<TELFPHdr> ElfGetLoadablePrograms(const ElfPack<TELFHdr>& libMap)
-    {
-        std::vector<TELFPHdr> allPrograms = ElfGetPrograms(libMap);
-        std::vector<TELFPHdr> result;
-
-        for (const auto& program : allPrograms)
+        catch (std::exception& e)
         {
-            if (program.p_type != PT_LOAD)
-                continue;
-
-            result.push_back(program);
-        }
-
-        return result;
-    }
-
-    /**
-     * @brief Traverse the symbol table.
-     * @param callback: A callback, for each symbol found, this callback will be invocated with the actual symbol & its name.
-     * @returns true if a symbol table to traverse was found, nullptr otherwise.
-    */
-    template<typename TELFHdr, typename TELFSHdr, typename TELFSym>
-    inline bool ElfForEachSymbol(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFSym* pCurrentSym, const char* pCurrSymName)> callback)
-    {
-        auto* symTable = ElfGetSymbolSection<TELFHdr, TELFSHdr>(libMap);
-
-        if (symTable == nullptr)
+            std::cerr << e.what();
             return false;
-
-        auto* strTable = ElfSectionByIndex<TELFHdr, TELFSHdr>(libMap, symTable->sh_link);
-
-        if (strTable == nullptr)
-            return false;
-
-        const char* elfStrBlob = (const char*)(libMap.base + strTable->sh_offset);
-
-        int nSyms = symTable->sh_size / sizeof(TELFSym);
-        TELFSym* symEntry = (TELFSym*)(libMap.base + symTable->sh_offset);
-        TELFSym* symEnd = symEntry + nSyms;
-
-        for (TELFSym* sym = symEntry; sym < symEnd; sym++)
-        {
-            /*if ((ELF_ST_BIND(sym->st_info) & (STT_FUNC | STB_GLOBAL)) == 0)
-                continue;*/
-
-            if (callback(sym, elfStrBlob + sym->st_name) == false)
-                break;
         }
 
         return true;
-    }
-
-    /**
-     * @brief Lookup a symbol by its name.
-     * @param symbolName: The Name of the symbol to look for.
-     * @param outSymbolOff: (optional) A Pointer to variable where resulting relative displacement of the symbol will be saved if found.
-     * @returns true if the symbol was found, false otherwise.
-     * @note Symbol lookup may fail for various reasons, such as the absence of a symbol table or the symbol not being present in the symbol table.
-    */
-    template<typename TELFHdr, typename TELFSHdr, typename TELFSym>
-    inline bool ElfLookupSymbol(const ElfPack<TELFHdr>& libMap, const std::string& symbolName, uint64_t* outSymbolOff = nullptr)
-    {
-        bool bSymbolFound = false;
-
-        if (outSymbolOff)
-            *outSymbolOff = 0;
-
-        if (ElfForEachSymbol<TELFHdr, TELFSHdr, TELFSym>(libMap, [&](auto* currSym, const char* currSymName) {
-            if (strcmp(currSymName, symbolName.c_str()))
-                return true;
-
-            bSymbolFound = true;
-
-            if (outSymbolOff)
-                *outSymbolOff = currSym->st_value;
-
-            return false;
-            }) == false)
-            return false;
-
-            return bSymbolFound;
     }
 }
