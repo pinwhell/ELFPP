@@ -5,7 +5,6 @@
 ## Features
 
 - **File Mapping:** Efficiently map ELF files into memory, abstracting platform-specific details.
-- **ELF Structure Access:** Access ELF file data through a unified interface using the `ElfPack` structure.
 - **Section Handling:** Retrieve, iterate, and lookup ELF sections by index or name.
 - **Program Header Exploration:** Explore program headers, including loadable program headers.
 - **Symbol Table Interaction:** Traverse symbol tables, lookup symbols by name, and iterate over symbols.
@@ -16,10 +15,10 @@
 
 ```cpp
 #include "ELFPP.hpp"
-
+using namespace ELFPP;
 // Open ELF file
-ELFPP::ElfPack<Elf64_Ehdr> elfPack;
-if (ELFPP::ElfOpen("example.elf", elfPack)) {
+std::unique_ptr<IELF> elf;
+if (ElfOpen("example.elf", elf)) {
     // Access ELF file data through elfPack
 }
 ```
@@ -29,7 +28,7 @@ if (ELFPP::ElfOpen("example.elf", elfPack)) {
 ```cpp
 
 // Iterate over all sections
-ELFPP::ElfForEachSection(elfPack, [](Elf64_Shdr* section) -> bool {
+elf->ForEachSection([](void* section) -> bool {
     // Process each section
     return true; // Continue iteration
 });
@@ -41,7 +40,7 @@ ELFPP::ElfForEachSection(elfPack, [](Elf64_Shdr* section) -> bool {
 
 // Lookup a symbol by name
 uint64_t symbolOffset;
-if (ELFPP::ElfLookupSymbol(elfPack, "example_symbol", &symbolOffset)) {
+if (elf->LookupSymbol("example_symbol", &symbolOffset)) {
     // Symbol found, use symbolOffset
 }
 ```
