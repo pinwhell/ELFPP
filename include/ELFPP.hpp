@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <unordered_map>
 
 #ifdef _WIN32 
 #include <Windows.h>
@@ -996,8 +997,8 @@ namespace ELFPP {
         return bIsThunk;
     }
 
-    using ELF32 = typename ELF<Elf32_Ehdr, Elf32_Shdr, Elf32_Phdr, Elf32_Sym>;
-    using ELF64 = typename ELF<Elf64_Ehdr, Elf64_Shdr, Elf64_Phdr, Elf64_Sym>;
+    using ELF32 = ELF<Elf32_Ehdr, Elf32_Shdr, Elf32_Phdr, Elf32_Sym>;
+    using ELF64 = ELF<Elf64_Ehdr, Elf64_Shdr, Elf64_Phdr, Elf64_Sym>;
 
     template<typename ELFT>
     inline ELFT FromBuffer(const void* entry) {
