@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <unordered_map>
+#include <string.h>
 
 #ifdef _WIN32 
 #include <Windows.h>
@@ -20,10 +21,6 @@
 #include <unistd.h>
 #endif
 
-
-#if __has_include(<elf.h>)
-#include <elf.h>
-#else
 
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_LINUX_ELF_H
@@ -560,7 +557,6 @@ typedef struct elf64_note {
 #define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
 
 #endif /* _UAPI_LINUX_ELF_H */
-#endif
 
 namespace ELFPP {
     class FileMapping {
