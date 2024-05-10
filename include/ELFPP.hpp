@@ -572,7 +572,7 @@ namespace ELFPP {
 
             Initialize(filePath);
 
-#if not defined(_WIN32) and not defined(__linux__)
+#if defined(_WIN32) == 0 && defined(__linux__) == 0
 #error "Invalid Plataform"
 #endif
 
