@@ -703,6 +703,32 @@ namespace ELFPP {
         virtual uint64_t GetSymbolOffset(void* sym) = 0;
     };
 
+    template<typename T>
+    inline bool IsELF(T buff)
+    {
+        Elf32_Ehdr* hdr = (Elf32_Ehdr*)buff;
+        uint32_t magic =
+            hdr->e_ident[EI_MAG0] |
+            hdr->e_ident[EI_MAG1] << 8 |
+            hdr->e_ident[EI_MAG2] << 16 |
+            hdr->e_ident[EI_MAG3] << 24;
+
+        if (magic != 0x464C457F)
+            return false;
+
+        switch (hdr->e_ident[EI_CLASS])
+        {
+        case ELFCLASS32:
+        case ELFCLASS64:
+            break;
+
+        default:
+            return false;
+        }
+
+        return true;
+    }
+
     /**
     * @brief Holds the ELF File Mapping
     */
