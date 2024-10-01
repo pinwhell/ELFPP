@@ -130,6 +130,7 @@ typedef int64_t	Elf64_Sxword;
 #define DT_VERSYM	0x6ffffff0
 #define DT_RELACOUNT	0x6ffffff9
 #define DT_RELCOUNT	0x6ffffffa
+#define DT_GNU_HASH 0x6FFFFEF5
 #define DT_FLAGS_1	0x6ffffffb
 #define DT_VERDEF	0x6ffffffc
 #define	DT_VERDEFNUM	0x6ffffffd
@@ -610,6 +611,10 @@ namespace ELFPP {
     template<typename TELFHdr>
     struct ElfPack {
 
+        ElfPack()
+            : base(0)
+        {}
+
         std::unique_ptr<FileMapping> mapping;
 
         union {
@@ -659,6 +664,15 @@ namespace ELFPP {
         return true;
     }
 
+    template<typename TELFHdr>
+    inline bool ElfOpenFromMemory(const void* rawElf, ElfPack<TELFHdr>& outElfPack)
+    {
+        outElfPack.mapping.reset();
+        outElfPack.baseV = (void*)rawElf;
+
+        return true;
+    }
+
     /**
      * @brief Check if ELF file is 64 bits.
      * @returns true if ELF File is 64 bits, false otherwise
@@ -683,7 +697,7 @@ namespace ELFPP {
      * @param sectionIdx: the given section index
      * @returns a pointer to a section header if valid, nullptr otherwise
     */
-    template<typename TELFHdr, typename TELFSHdr>
+    template<typename TELFSHdr, typename TELFHdr>
     inline TELFSHdr* ElfSectionByIndex(const ElfPack<TELFHdr>& libMap, unsigned int sectionIdx)
     {
         if ((sectionIdx < libMap.header->e_shnum) == false)
@@ -698,7 +712,7 @@ namespace ELFPP {
      * @brief Traverses all sections within the ELF File
      * @param callback: will be reported, all the given sections
     */
-    template<typename TELFHdr, typename TELFSHdr>
+    template<typename TELFSHdr, typename TELFHdr>
     inline void ElfForEachSection(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFSHdr* pCurrentSection)> callback)
     {
         TELFSHdr* libElfSections = (TELFSHdr*)(libMap.base + libMap.header->e_shoff);
@@ -720,7 +734,7 @@ namespace ELFPP {
     {
         TELFSHdr* secHeader = nullptr;
 
-        ElfForEachSection<TELFHdr, TELFSHdr>(libMap, [&](TELFSHdr* currSection) {
+        ElfForEachSection<TELFSHdr>(libMap, [&](TELFSHdr* currSection) {
             if (currSection->sh_type != sectionType)
                 return true;
 
@@ -736,13 +750,13 @@ namespace ELFPP {
      * @brief Retrieve the ELF Section Headers Name Blob (shstr) Entry.
      * @returns A pointer to the char blob entry if exist; nullptr otherwise
     */
-    template<typename TELFHdr>
+    template<typename TELFSHdr, typename TELFHdr>
     inline const char* ElfGetSectionHeadersStringBlob(const ElfPack<TELFHdr>& libMap)
     {
         if (libMap.header->e_shstrndx == SHN_UNDEF)
             return nullptr;
 
-        const auto* shStrSec = ElfSectionByIndex(libMap, libMap.header->e_shstrndx);
+        const auto* shStrSec = ElfSectionByIndex<TELFSHdr>(libMap, libMap.header->e_shstrndx);
 
         if (shStrSec == nullptr || shStrSec->sh_offset < 1)
             return nullptr;
@@ -755,10 +769,10 @@ namespace ELFPP {
      * @param sectionHdr: Pointer to ELF Section Header
      * @returns A Pointer to the section name if exist; nullptr otherwise.
     */
-    template<typename TELFHdr, typename TELFSHdr>
+    template<typename TELFSHdr, typename TELFHdr>
     inline const char* ElfGetSectionName(const ElfPack<TELFHdr>& libMap, TELFSHdr* sectionHdr)
     {
-        const char* shStrBlob = ElfGetSectionHeadersStringBlob(libMap);
+        const char* shStrBlob = ElfGetSectionHeadersStringBlob<TELFSHdr>(libMap);
 
         if (shStrBlob == nullptr)
             return nullptr;
@@ -771,13 +785,13 @@ namespace ELFPP {
      * @param sectionName: Name of the section (ex: ".rodata", ".text" ...)
      * @returns A Pointer to the ELF Section if found; nullptr otherwise.
     */
-    template<typename TELFHdr, typename TELFSHdr>
+    template<typename TELFSHdr, typename TELFHdr>
     inline TELFSHdr* ElfLookupSectionByName(const ElfPack<TELFHdr>& libMap, const std::string& sectionName)
     {
         TELFSHdr* secHeader = nullptr;
 
-        ElfForEachSection(libMap, [&](TELFSHdr* currSection) {
-            const char* currSectionName = ElfGetSectionName(libMap, currSection);
+        ElfForEachSection<TELFSHdr>(libMap, [&](TELFSHdr* currSection) {
+            const char* currSectionName = ElfGetSectionName<TELFSHdr>(libMap, currSection);
 
             if (currSectionName == nullptr)
                 return true;
@@ -881,7 +895,7 @@ namespace ELFPP {
         if (symTable == nullptr)
             return false;
 
-        auto* strTable = ElfSectionByIndex<TELFHdr, TELFSHdr>(libMap, symTable->sh_link);
+        auto* strTable = ElfSectionByIndex<TELFSHdr>(libMap, symTable->sh_link);
 
         if (strTable == nullptr)
             return false;
@@ -911,7 +925,7 @@ namespace ELFPP {
      * @returns true if the symbol was found, false otherwise.
      * @note Symbol lookup may fail for various reasons, such as the absence of a symbol table or the symbol not being present in the symbol table.
     */
-    template<typename TELFHdr, typename TELFSHdr, typename TELFSym>
+    template<typename TELFSym, typename TELFSHdr, typename TELFHdr>
     inline bool ElfLookupSymbol(const ElfPack<TELFHdr>& libMap, const std::string& symbolName, uint64_t* outSymbolOff = nullptr)
     {
         bool bSymbolFound = false;
@@ -933,5 +947,123 @@ namespace ELFPP {
             return false;
 
             return bSymbolFound;
+    }
+
+    template<typename TELFPHdr, typename TELFHdr>
+    inline size_t ElfImageSize(const ElfPack<TELFHdr>& libMap, bool bLoadable = false)
+    {
+        size_t result = 0;
+
+        ElfForEachProgram<TELFHdr, TELFPHdr>(libMap, [&](TELFPHdr* pCurr) {
+            if (bLoadable && pCurr->p_type != PT_LOAD)
+                return true;
+
+            size_t currDisplacement = pCurr->p_vaddr + pCurr->p_memsz;
+
+            if (currDisplacement < result)
+                return true;
+
+            result = currDisplacement;
+
+            return true;
+
+            });
+
+        return result;
+    }
+
+    template<typename TELFHdr, typename TELFPHdr>
+    inline bool ElfFileToVirtualOffset(const ElfPack<TELFHdr>& libMap, uint64_t fileOffset, uint64_t& outVirtOffset)
+    {
+        bool bFound = false;
+
+        ElfForEachProgram<TELFHdr, TELFPHdr>(libMap, [&](TELFPHdr* pCurr) {
+            uint64_t currVirtStart = pCurr->p_vaddr;
+            uint64_t currFileStart = pCurr->p_paddr;
+            uint64_t currVirtEnd = currVirtStart + pCurr->p_memsz;
+            uint64_t currFileEnd = currFileStart + pCurr->p_filesz;
+
+            if ((fileOffset >= currFileStart &&
+                fileOffset < currFileEnd) == false)
+                return true;
+
+            // At this point, we found in what
+            // program the file offset lives in
+            // lets just do the translation & stop
+
+            outVirtOffset = (fileOffset - currFileStart) + currVirtStart;
+            bFound = true;
+
+            return false;
+
+            });
+
+        return bFound;
+    }
+
+    template<typename TELFHdr, typename TELFPHdr>
+    inline bool ElfVirtualToFileOffset(const ElfPack<TELFHdr>& libMap, uint64_t virtualOffset, uint64_t& outFileOffset)
+    {
+        bool bFound = false;
+
+        ElfForEachProgram<TELFHdr, TELFPHdr>(libMap, [&](TELFPHdr* pCurr) {
+            uint64_t currVirtStart = pCurr->p_vaddr;
+            uint64_t currFileStart = pCurr->p_offset;
+            uint64_t currVirtEnd = currVirtStart + pCurr->p_memsz;
+            uint64_t currFileEnd = currFileStart + pCurr->p_filesz;
+
+            if ((virtualOffset >= currVirtStart &&
+                virtualOffset < currVirtEnd) == false)
+                return true;
+
+            // At this point, we found in what
+            // program the virtual offset lives in
+            // lets just do the translation & stop
+
+            outFileOffset = (virtualOffset - currVirtStart) + currFileStart;
+            bFound = true;
+
+            return false;
+
+            });
+
+        return bFound;
+    }
+
+    template<typename TELFDyn, typename TELFSHdr, typename TELFHdr>
+    inline bool ElfForEachDynamicTableEntry(const ElfPack<TELFHdr>& libMap, std::function<bool(TELFDyn*)> callback)
+    {
+        TELFSHdr* pDynSec = ElfLookupSectionByName<TELFSHdr>(libMap, ".dynamic");
+
+        if (pDynSec == nullptr)
+            return false;
+
+        TELFDyn* pDynEntries = (TELFDyn*)(libMap.base + pDynSec->sh_offset);
+        size_t entriesCount = pDynSec->sh_size / pDynSec->sh_entsize;
+
+        for (TELFDyn* i = pDynEntries; i < pDynEntries + entriesCount; i++)
+        {
+            if (callback(i) == false)
+                break;
+        }
+
+        return true;
+    }
+
+    template<typename TELFDyn, typename TELFSHdr, typename TELFHdr>
+    inline std::unordered_map<int32_t, std::vector<TELFDyn>> ElfGetDynamicTable(const ElfPack<TELFHdr>& libMap)
+    {
+        std::unordered_map<int32_t, std::vector<TELFDyn>> result;
+
+        ElfForEachDynamicTableEntry<TELFDyn, TELFSHdr>(libMap, [&](TELFDyn* pCurr) {
+            if (result.find(pCurr->d_tag) == result.end())
+                result[pCurr->d_tag] = std::vector<TELFDyn>();
+
+            result[pCurr->d_tag].push_back(*pCurr);
+
+            return true;
+            });
+
+        return result;
     }
 }
