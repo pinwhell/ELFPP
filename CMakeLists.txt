@@ -1,21 +1,16 @@
 cmake_minimum_required(VERSION 3.10)
-
 project(ELFPP) 
-
+include(CBuildKit)
+option(ELFPP_INSTALL "Install ELFPP" ON)
 add_subdirectory(vendor)
-option(ELFPP_INSTALL "Install ELFPP" OFF)
 
-add_library(ELFPP INTERFACE)
-
-target_include_directories(ELFPP INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-
+add_library_ns(elfpp elfpp INTERFACE)
+target_include_dir_iface(elfpp-elfpp INTERFACE ${CMAKE_SOURCE_DIR}/include include)
 add_subdirectory(tests)
 
 if(ELFPP_INSTALL)
-    install(FILES include/ELFPP.hpp DESTINATION include)
-    install(TARGETS ELFPP EXPORT ELFPPTargets)
-    export(EXPORT ELFPPTargets FILE ELFPPConfig.cmake) 
-    install(EXPORT ELFPPTargets FILE ELFPPConfig.cmake DESTINATION cmake)
+	install_target_and_headers(elfpp elfpp)
+	install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+        DESTINATION include)
+	install(FILES cmake/ELFPPConfig.cmake DESTINATION lib/cmake/elfpp)
 endif()

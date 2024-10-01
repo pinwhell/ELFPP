@@ -696,6 +696,7 @@ namespace ELFPP {
         virtual void* GetSymbolSection() = 0;
         virtual bool ForEachSymbol(std::function<bool(void* pCurrentSym, const char* pCurrSymName)> callback, bool bOnlyGlobals = false) = 0;
         virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
+        virtual std::uint64_t GetProgramFlags(void* _program) = 0;
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
         virtual std::vector<void*> GetLoadablePrograms() = 0;
@@ -913,6 +914,12 @@ namespace ELFPP {
                 return false;
 
                 return bSymbolFound;
+        }
+
+        inline std::uint64_t GetProgramFlags(void* _program)
+        {
+            TELFPHdr* program = (TELFPHdr*)_program;
+            return program->p_flags;
         }
 
         inline void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
