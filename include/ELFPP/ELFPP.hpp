@@ -697,6 +697,7 @@ namespace ELFPP {
         virtual bool ForEachSymbol(std::function<bool(void* pCurrentSym, const char* pCurrSymName)> callback, bool bOnlyGlobals = false) = 0;
         virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
         virtual std::uint64_t GetProgramFlags(void* _program) = 0;
+        virtual std::pair<uint64_t, size_t> GetProgramViewRVA(void*_program) = 0;
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
         virtual std::vector<void*> GetLoadablePrograms() = 0;
@@ -921,6 +922,12 @@ namespace ELFPP {
             TELFPHdr* program = (TELFPHdr*)_program;
             return program->p_flags;
         }
+        
+        inline std::pair<uint64_t, size_t> GetProgramViewRVA(void* _program)
+        {
+            TELFPHdr* program = (TELFPHdr*)_program;
+            return std::make_pair(program->p_vaddr, program->p_memsz);
+        }
 
         inline void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
         {
@@ -1080,4 +1087,20 @@ namespace ELFPP {
 
         return true;
     }
+
+    class Container {
+    public:
+        inline Container(const std::vector<std::uint8_t>& blob)
+            : mStrg(blob)
+            , mELF(std::move(FromBuffer(mStrg.data())))
+        {}
+
+        inline IELF* operator*()
+        {
+            return mELF.get();
+        }
+
+        std::vector<std::uint8_t> mStrg;
+        std::unique_ptr<IELF> mELF;
+    };
 }
