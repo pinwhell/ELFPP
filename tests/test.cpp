@@ -1,5 +1,3 @@
-#include <doctest/doctest.h>
-
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -60,3 +58,13 @@ private:
 };
 
 using namespace ELFPP;
+
+int main()
+{
+    FileRAII f(libSampleELF_so, sizeof(libSampleELF_so), "sample.sample");
+    std::unique_ptr<ELFPP::IELF> elf;
+    if(!ELFPP::ElfOpen("sample.sample", elf)) return 0;
+    std::cout << std::hex << elf->GetImageSize() << std::endl;
+    Shift<>{ 0x10 }.Disp<int>(0);
+
+}

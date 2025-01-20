@@ -568,7 +568,7 @@ namespace ELFPP {
             , mapView(nullptr)
         {
 
-            Initialize(filePath);
+            Initialize(std::filesystem::absolute(filePath).string().c_str());
 
 #if defined(_WIN32) == 0 && defined(__linux__) == 0
 #error "Invalid Plataform"
@@ -641,20 +641,20 @@ namespace ELFPP {
 #ifdef _WIN32
         inline void Initialize(const char* filePath)
         {
-            fileHandle = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            fileHandle = CreateFileA(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (fileHandle == INVALID_HANDLE_VALUE)
                 throw std::runtime_error("Error opening file");
 
             fileSize = GetFileSize(fileHandle, nullptr);
 
-            fileMapping = CreateFileMappingA(fileHandle, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+            fileMapping = CreateFileMappingA(fileHandle, nullptr, PAGE_READONLY, 0, 0, nullptr);
             if (fileMapping == nullptr)
             {
                 CloseHandle(fileHandle);
                 throw std::runtime_error("Error creating file mapping");
             }
 
-            mapView = MapViewOfFile(fileMapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
+            mapView = MapViewOfFile(fileMapping, FILE_MAP_READ, 0, 0, 0);
 
             if (mapView == nullptr) {
                 CloseHandle(fileMapping);
@@ -680,6 +680,17 @@ namespace ELFPP {
 #endif
     };
 
+    template<typename TDisp = std::size_t>
+    struct Shift {
+        // Displace a base
+        template<typename TRes, typename TBase>
+        inline TRes Disp(TBase base)
+        {
+            return TRes((std::uint64_t)base + mDisp);
+        }
+        TDisp mDisp;
+    };
+
     enum class EMachine {
         UNDEFINED,
         X86,
@@ -687,6 +698,7 @@ namespace ELFPP {
     };
 
     struct IELF {
+        virtual ~IELF() = default;
         virtual void* SectionByIndex(unsigned int sectionIdx) = 0;
         virtual void ForEachSection(std::function<bool(void* pCurrentSection)> callback) = 0;
         virtual void* LookupSectionByType(uint32_t sectionType) = 0;
@@ -698,12 +710,14 @@ namespace ELFPP {
         virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
         virtual std::uint64_t GetProgramFlags(void* _program) = 0;
         virtual std::pair<uint64_t, size_t> GetProgramViewRVA(void*_program) = 0;
+        virtual std::pair<uint64_t, size_t> GetProgramViewPA(void* _program) = 0;
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
         virtual std::vector<void*> GetLoadablePrograms() = 0;
         virtual bool Is64() = 0;
         virtual EMachine GetTargetMachine() = 0;
         virtual uint64_t GetSymbolOffset(void* sym) = 0;
+        virtual std::size_t GetImageSize() = 0;
     };
 
     template<typename T>
@@ -737,6 +751,24 @@ namespace ELFPP {
     */
     template<typename TELFHdr, typename TELFSHdr, typename TELFPHdr, typename TELFSym>
     struct ELF : public IELF {
+
+        inline std::size_t GetImageSize() override
+        {
+            auto allLoadables = GetLoadablePrograms();
+            if (allLoadables.empty())
+                return 0;
+            else if (allLoadables.size() == 1)
+                return ((TELFPHdr*)allLoadables[0])->p_memsz;
+            std::vector<std::pair<std::uint64_t, std::size_t>> loadableInfo;
+            std::transform(allLoadables.begin(), allLoadables.end(), std::back_inserter(loadableInfo), [this](auto x) {
+                return GetProgramViewRVA(x);
+                });
+            std::sort(loadableInfo.begin(), loadableInfo.end(), [](auto a, auto b) {
+                return a.first < b.first;
+                });
+            const auto& last = loadableInfo.back();
+            return last.first + last.second;
+        }
 
         inline uint64_t GetSymbolOffset(void* _sym) override {
             TELFSym* sym = (TELFSym*)_sym;
@@ -927,6 +959,12 @@ namespace ELFPP {
         {
             TELFPHdr* program = (TELFPHdr*)_program;
             return std::make_pair(program->p_vaddr, program->p_memsz);
+        }
+
+        inline std::pair<uint64_t, size_t> GetProgramViewPA(void* _program)
+        {
+            TELFPHdr* program = (TELFPHdr*)_program;
+            return std::make_pair(program->p_offset, program->p_filesz);
         }
 
         inline void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) override
