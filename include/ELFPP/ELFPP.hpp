@@ -709,15 +709,21 @@ namespace ELFPP {
         virtual bool ForEachSymbol(std::function<bool(void* pCurrentSym, const char* pCurrSymName)> callback, bool bOnlyGlobals = false) = 0;
         virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
         virtual std::uint64_t GetProgramFlags(void* _program) = 0;
+        virtual std::uint64_t GetProgramType(void* _program) = 0;
         virtual std::pair<uint64_t, size_t> GetProgramViewRVA(void*_program) = 0;
         virtual std::pair<uint64_t, size_t> GetProgramViewPA(void* _program) = 0;
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
-        virtual std::vector<void*> GetLoadablePrograms() = 0;
+        virtual std::vector<void*> GetProgramsByType(std::uint32_t type) = 0;
         virtual bool Is64() = 0;
         virtual EMachine GetTargetMachine() = 0;
         virtual uint64_t GetSymbolOffset(void* sym) = 0;
         virtual std::size_t GetImageSize() = 0;
+
+        std::vector<void*> GetLoadablePrograms()
+        {
+            return GetProgramsByType(PT_LOAD);
+        }
     };
 
     template<typename T>
@@ -954,6 +960,12 @@ namespace ELFPP {
             TELFPHdr* program = (TELFPHdr*)_program;
             return program->p_flags;
         }
+
+        inline std::uint64_t GetProgramType(void* _program)
+        {
+            TELFPHdr* program = (TELFPHdr*)_program;
+            return program->p_type;
+        }
         
         inline std::pair<uint64_t, size_t> GetProgramViewRVA(void* _program)
         {
@@ -1002,7 +1014,7 @@ namespace ELFPP {
             return result;
         }
 
-        inline std::vector<void*> GetLoadablePrograms() override
+        inline std::vector<void*> GetProgramsByType(std::uint32_t type) override
         {
             std::vector<void*> allPrograms = GetPrograms();
             std::vector<void*> result;
@@ -1010,7 +1022,7 @@ namespace ELFPP {
             for (void* _program : allPrograms)
             {
                 const TELFPHdr& program = *(const TELFPHdr*)_program;
-                if (program.p_type != PT_LOAD)
+                if (program.p_type != type)
                     continue;
 
                 result.push_back(_program);
