@@ -5,7 +5,7 @@ option(ELFPP_INSTALL "Install ELFPP" ON)
 add_subdirectory(vendor)
 
 add_library_ns(elfpp elfpp INTERFACE)
-target_include_dir_iface(elfpp-elfpp INTERFACE ${CMAKE_SOURCE_DIR}/include include)
+target_include_dir_iface(elfpp-elfpp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include include)
 add_subdirectory(tests)
 
 if(ELFPP_INSTALL)
