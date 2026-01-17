@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(ELFPP) 
-include(CBuildKit)
+include(cmake/CBuildKit.cmake)
 option(ELFPP_INSTALL "Install ELFPP" ON)
 add_subdirectory(vendor)
 

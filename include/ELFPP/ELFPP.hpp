@@ -533,6 +533,7 @@ typedef struct elf64_shdr {
 #define EM_ARC_A5	93		/* ARC Cores Tangent-A5 */
 #define EM_XTENSA	94		/* Tensilica Xtensa Architecture */
 #define EM_NUM		95
+#define EM_AARCH64	183
 
   /* Note types with note name "GNU" */
 #define NT_GNU_PROPERTY_TYPE_0	5
@@ -694,7 +695,8 @@ namespace ELFPP {
     enum class EMachine {
         UNDEFINED,
         X86,
-        ARM
+        ARM,
+        AARCH64
     };
 
     struct IELF {
@@ -710,7 +712,7 @@ namespace ELFPP {
         virtual bool LookupSymbol(const std::string& symbolName, uint64_t* outSymbolOff = nullptr, bool bOnlyGlobals = false) = 0;
         virtual std::uint64_t GetProgramFlags(void* _program) = 0;
         virtual std::uint64_t GetProgramType(void* _program) = 0;
-        virtual std::pair<uint64_t, size_t> GetProgramViewRVA(void*_program) = 0;
+        virtual std::pair<uint64_t, size_t> GetProgramViewRVA(void* _program) = 0;
         virtual std::pair<uint64_t, size_t> GetProgramViewPA(void* _program) = 0;
         virtual void ForEachProgram(std::function<bool(void* pCurrenProgram)> callback) = 0;
         virtual std::vector<void*> GetPrograms(bool bSort = false) = 0;
@@ -787,7 +789,8 @@ namespace ELFPP {
             static std::unordered_map<uint16_t, EMachine> eMachines{
                 {EM_386, EMachine::X86},
                 {EM_X86_64, EMachine::X86},
-                {EM_ARM, EMachine::ARM}
+                {EM_ARM, EMachine::ARM},
+                {EM_AARCH64, EMachine::AARCH64}
             };
 
             if (eMachines.find(header->e_machine) == eMachines.end())
@@ -952,7 +955,7 @@ namespace ELFPP {
                 }, bOnlyGlobals) == false)
                 return false;
 
-                return bSymbolFound;
+            return bSymbolFound;
         }
 
         inline std::uint64_t GetProgramFlags(void* _program)
@@ -966,7 +969,7 @@ namespace ELFPP {
             TELFPHdr* program = (TELFPHdr*)_program;
             return program->p_type;
         }
-        
+
         inline std::pair<uint64_t, size_t> GetProgramViewRVA(void* _program)
         {
             TELFPHdr* program = (TELFPHdr*)_program;
@@ -1102,7 +1105,7 @@ namespace ELFPP {
     inline std::unique_ptr<IELF> FromBuffer(const void* entry) {
         if (ElfPeekIs64(entry))
             return std::move(std::make_unique<ELF64>(FromBuffer<ELF64>(entry)));
-        
+
         return std::move(std::make_unique<ELF32>(FromBuffer<ELF32>(entry)));
     }
 
@@ -1143,7 +1146,8 @@ namespace ELFPP {
         inline Container(const std::vector<std::uint8_t>& blob)
             : mStrg(blob)
             , mELF(std::move(FromBuffer(mStrg.data())))
-        {}
+        {
+        }
 
         inline IELF* operator*()
         {
